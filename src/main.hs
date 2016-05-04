@@ -1,10 +1,14 @@
-{-# LANGUAGE DataKinds, TypeOperators, FlexibleContexts, Rank2Types, DeriveFunctor #-}
--- import Haste
--- import MakeLense
--- import Lens.Family2
--- import Control.Monad.State
--- import Data.IORef
-import Debug.Trace
+{-# LANGUAGE DataKinds, TypeOperators, FlexibleContexts, Rank2Types #-}
+{-# LANGUAGE DeriveFunctor, ScopedTypeVariables #-}
+import Haste
+import Haste.Foreign hiding (get)
+import Haste.JSON
+import Haste.Serialize
+import MakeLense
+import Lens.Family2
+import Lens.Family2.State.Lazy
+import Data.IORef
+import Control.Monad.State
 
 data LambdaT a = LVar a | LAbs Lambda | LApp Lambda Lambda deriving (Eq, Show, Functor)
 type Lambda = LambdaT Int
@@ -81,13 +85,58 @@ seval m0 = go 0 m0 where
   go n (CApp (CApp (CApp S m1) m2) m3) = go (n+1) (CApp (CApp m1 m3) (CApp m2 m3))
   go n m = (n,m)
 
--- type Game = UnionT '[
---   "tiles" :< [[CTerm]]
---   ]
+data MachineType = Miner | Factory deriving (Eq, Show, Enum, Read)
+
+instance ToAny MachineType where
+  toAny = toAny . show
+
+instance FromAny MachineType where
+  fromAny k = read <$> fromAny k
+
+instance Serialize MachineType where
+  toJSON = Num . fromIntegral . fromEnum
+  parseJSON n = toEnum <$> parseJSON n
+
+type Machine = UnionT '[
+  "mtype" :< MachineType,
+  "position" :< (Int, Int)
+  ]
+
+type Game = UnionT '[
+  "machines" :< [Machine]
+  ]
+
+mtype :: Has (Union xs) "mtype" out => Lens' (Union xs) out; mtype = lenses (Name :: Name "mtype")
+position :: Has (Union xs) "position" out => Lens' (Union xs) out; position = lenses (Name :: Name "position")
+machines :: Has (Union xs) "machines" out => Lens' (Union xs) out; machines = lenses (Name :: Name "machines")
+
+initGame :: IO (Opaque Game)
+initGame = return $ toOpaque $
+  sinsert (Tag []) $
+  Union HNil
+
+newMachine :: (Int, Int) -> StateT Game IO ()
+newMachine p = do
+  let mch = sinsert (Tag Factory) $ sinsert (Tag p) $ Union HNil
+  machines %= (mch :)
+  lift . print =<< get
+
+machinesOnScreen :: (Int, Int) -> Opaque Game -> IO [((Int,Int), MachineType)]
+machinesOnScreen (px, py) g = return $ fmap (\m -> (m^.position, m^.mtype)) $ filter (\m -> (m^.position) `isIn` ((px - 320, py - 200), (px + 320, py + 200))) (fromOpaque g ^. machines)
+  where
+    isIn :: (Ord a) => (a,a) -> ((a,a),(a,a)) -> Bool
+    isIn (x,y) ((rx1,ry1),(rx2,ry2)) = rx1 <= x && x <= rx2 && ry1 <= y && y <= ry2
+
+tick :: StateT Game IO ()
+tick = do
+  -- lift . print =<< get
+  return ()
+
+liftO :: StateT a IO () -> Opaque a -> IO (Opaque a)
+liftO m op = toOpaque <$> execStateT m (fromOpaque op)
 
 main = do
-  print "hoge"
-
--- refStateT :: IORef s -> StateT s IO () -> IO ()
--- refStateT ref m = do
---   writeIORef ref =<< execStateT m =<< readIORef ref
+  export (toJSString "initGame") initGame
+  export (toJSString "tick") (liftO tick)
+  export (toJSString "newMachine") (\p -> liftO (newMachine p))
+  export (toJSString "machinesOnScreen") machinesOnScreen

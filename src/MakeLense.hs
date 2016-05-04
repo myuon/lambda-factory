@@ -31,6 +31,7 @@ import Lens.Family2.Unchecked
 
 import Haste
 import Haste.JSON
+import Haste.Foreign
 import Haste.Serialize
 import Data.Monoid hiding (All)
 
@@ -186,6 +187,14 @@ lenses syb = lens (^. getter syb) (\u x -> set (setter syb) x u)
 instance (Serialize v, KnownSymbol k) => Serialize ((:<) k v) where
   toJSON (Tag t :: k :< v) = Dict [(toJSString $ symbolVal (Name :: Name k), toJSON t)]
   parseJSON (Dict [(_, t)]) = (\t' -> (Tag t' :: k :< v)) <$> parseJSON t
+
+instance (ToAny v) => ToAny ((:<) k v) where
+  toAny (Tag t :: k :< v) = toAny t
+
+instance (FromAny v) => FromAny ((:<) k v) where
+  fromAny jany = do
+    t <- fromAny jany
+    return $ (Tag t :: k :< v)
 
 -- {Dict *: JSON} is a monoid
 instance Monoid JSON where

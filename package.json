@@ -1,0 +1,17 @@
+{
+  "name": "_",
+  "version": "1.0.0",
+  "description": "",
+  "watch": {
+    "test": {
+      "patterns": ["src"],
+      "extensions": "hs,js"
+    }
+  },
+  "scripts": {
+    "test": "cd src; hastec '--start=$HASTE_MAIN(); initialize();' --with-js=interface.js main.hs -o ../pages/js/main.js",
+    "watch": "npm-watch"
+  },
+  "author": "",
+  "license": "MIT"
+}
