@@ -6,6 +6,7 @@ var stage;
 var mychara;
 var game;
 var factories = [];
+var g;
 
 function initialize() {
   stage = new createjs.Stage("canvas");
@@ -29,20 +30,10 @@ function initialize() {
 
   game = Haste.initGame();
 
-  var g = new createjs.Graphics();
+  g = new createjs.Graphics();
   g.beginFill(createjs.Graphics.getRGB(255,0,0));
-  g.drawRect(0,0,30,90);
+  g.drawRect(0,0,50,50);
 
-  var s = new createjs.Shape(g);
-  s.x = 100;
-  s.y = 100;
-
-  var s2 = new createjs.Shape(g);
-  s2.x = 200;
-  s2.y = 300;
-
-  stage.addChild(s);
-  stage.addChild(s2);
   stage.update();
 }
 
@@ -75,8 +66,14 @@ function tick() {
   }
   stage.update();
 
-  if (keys[90]) {
+  if (keys[122]) {
     game = Haste.newMachine(position, game);
+
+    var s = new createjs.Shape(g);
+    s.x = mychara.x;
+    s.y = mychara.y;
+    factories.push(s);
+    stage.addChild(s);
   }
 
   game = Haste.tick(game);
