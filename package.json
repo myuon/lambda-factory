@@ -4,7 +4,9 @@
   "description": "",
   "watch": {
     "test": {
-      "patterns": ["src"],
+      "patterns": [
+        "src"
+      ],
       "extensions": "hs,js"
     }
   },
@@ -13,5 +15,8 @@
     "watch": "npm-watch"
   },
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "semantic-ui": "^2.1.8"
+  }
 }

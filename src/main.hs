@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds, TypeOperators, FlexibleContexts, Rank2Types #-}
-{-# LANGUAGE DeriveFunctor, ScopedTypeVariables #-}
+{-# LANGUAGE DeriveFunctor, ScopedTypeVariables, PackageImports #-}
 import Haste
 import Haste.Foreign hiding (get)
 import Haste.JSON
@@ -8,7 +8,7 @@ import MakeLense
 import Lens.Family2
 import Lens.Family2.State.Lazy
 import Data.IORef
-import Control.Monad.State
+import "mtl" Control.Monad.State
 
 data LambdaT a = LVar a | LAbs Lambda | LApp Lambda Lambda deriving (Eq, Show, Functor)
 type Lambda = LambdaT Int
@@ -69,7 +69,7 @@ psubterms (LApp m1 m2) = psubterms m1 ++ psubterms m2
 
 leval :: Lambda -> (Int, Lambda)
 leval m0 = go 0 m0 where
-  go n z | n >= 2^(length $ show $ m0) = (-1, z)
+  go n z | n >= 2^(length $ show m0) = (-1, z)
   go n (LVar v) = (n,LVar v)
   go n (LAbs m) = go (n+1) m
   go n (LApp (LVar v) m2) = let (t,k) = go (n+1) m2 in (t, LApp (LVar v) k)
@@ -85,7 +85,17 @@ seval m0 = go 0 m0 where
   go n (CApp (CApp (CApp S m1) m2) m3) = go (n+1) (CApp (CApp m1 m3) (CApp m2 m3))
   go n m = (n,m)
 
-data MachineType = Miner | Factory deriving (Eq, Show, Enum, Read)
+data MachineType = Miner | Pipe | Factory deriving (Eq, Show, Enum, Read)
+
+inA :: MachineType -> Int
+inA Miner = 0
+inA Factory = 10
+inA Pipe = 1
+
+outA :: MachineType -> Int
+outA Miner = 10
+outA Factory = 0
+outA Pipe = 1
 
 instance ToAny MachineType where
   toAny = toAny . show
@@ -119,7 +129,6 @@ newMachine :: (Int, Int) -> StateT Game IO ()
 newMachine p = do
   let mch = sinsert (Tag Factory) $ sinsert (Tag p) $ Union HNil
   machines %= (mch :)
-  lift . print =<< get
 
 machinesOnScreen :: (Int, Int) -> Opaque Game -> IO [((Int,Int), MachineType)]
 machinesOnScreen (px, py) g = return $ fmap (\m -> (m^.position, m^.mtype)) $ filter (\m -> (m^.position) `isIn` ((px - 320, py - 200), (px + 320, py + 200))) (fromOpaque g ^. machines)
@@ -138,5 +147,7 @@ liftO m op = toOpaque <$> execStateT m (fromOpaque op)
 main = do
   export (toJSString "initGame") initGame
   export (toJSString "tick") (liftO tick)
-  export (toJSString "newMachine") (\p -> liftO (newMachine p))
+  export (toJSString "newMachine") (liftO . newMachine)
   export (toJSString "machinesOnScreen") machinesOnScreen
+  export (toJSString "inA") ((return :: Int -> IO Int) . inA . read)
+  export (toJSString "outA") ((return :: Int -> IO Int) . outA . read)
