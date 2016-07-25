@@ -6,14 +6,22 @@ import Haste.JSON
 import Haste.Serialize
 import MakeLense
 import Lens.Family2
+import Lens.Family2.Stock
 import Lens.Family2.State.Lazy
 import Data.IORef
+import qualified Data.Map as M
 import "mtl" Control.Monad.State
 
 data LambdaT a = LVar a | LAbs Lambda | LApp Lambda Lambda deriving (Eq, Show, Functor)
 type Lambda = LambdaT Int
-data SKI = S | K | I | CApp SKI SKI deriving (Eq, Show)
+data SKI = S | K | I | CApp SKI SKI deriving (Eq, Show, Read)
 data CTerm = CLambda Lambda | CSKI SKI deriving (Eq, Show)
+
+instance ToAny SKI where
+  toAny = toAny . show
+
+instance FromAny SKI where
+  fromAny k = read <$> fromAny k
 
 data LambdaS = LVar' Int | LAbs' Int LambdaS | LApp' LambdaS LambdaS
 
@@ -109,32 +117,63 @@ instance Serialize MachineType where
 
 type Machine = UnionT '[
   "mtype" :< MachineType,
-  "position" :< (Int, Int)
+  "position" :< (Int, Int),
+  "items" :< M.Map SKI Int
   ]
 
 type Game = UnionT '[
-  "machines" :< [Machine]
+  "machines" :< M.Map (Int,Int) Machine,
+  "connects" :< [((Int,Int),(Int,Int))],
+  "minemap" :< M.Map (Int,Int) (SKI,Double)
   ]
 
 mtype :: Has (Union xs) "mtype" out => Lens' (Union xs) out; mtype = lenses (Name :: Name "mtype")
 position :: Has (Union xs) "position" out => Lens' (Union xs) out; position = lenses (Name :: Name "position")
+items :: Has (Union xs) "items" out => Lens' (Union xs) out; items = lenses (Name :: Name "items")
 machines :: Has (Union xs) "machines" out => Lens' (Union xs) out; machines = lenses (Name :: Name "machines")
+connects :: Has (Union xs) "connects" out => Lens' (Union xs) out; connects = lenses (Name :: Name "connects")
+minemap :: Has (Union xs) "minemap" out => Lens' (Union xs) out; minemap = lenses (Name :: Name "minemap")
 
 initGame :: IO (Opaque Game)
 initGame = return $ toOpaque $
+  sinsert (Tag M.empty) $
   sinsert (Tag []) $
+  sinsert (Tag (M.fromList [((0,0), (S,100))])) $
   Union HNil
 
-newMachine :: (Int, Int) -> StateT Game IO ()
-newMachine p = do
-  let mch = sinsert (Tag Factory) $ sinsert (Tag p) $ Union HNil
-  machines %= (mch :)
+newMachine :: String -> (Int, Int) -> StateT Game IO ()
+newMachine st p = do
+  machines %= M.insert p mch
+  connectMF
+  where
+    mch =
+      sinsert (Tag (read st)) $
+      sinsert (Tag p) $
+      sinsert (Tag M.empty) $
+      Union HNil
 
 machinesOnScreen :: (Int, Int) -> Opaque Game -> IO [((Int,Int), MachineType)]
-machinesOnScreen (px, py) g = return $ fmap (\m -> (m^.position, m^.mtype)) $ filter (\m -> (m^.position) `isIn` ((px - 320, py - 200), (px + 320, py + 200))) (fromOpaque g ^. machines)
+machinesOnScreen (px, py) g = return $ fmap (\m -> (m^.position, m^.mtype)) $ filter (\m -> (m^.position) `isIn` ((px - 320, py - 200), (px + 320, py + 200))) (M.elems $ fromOpaque g ^. machines)
   where
     isIn :: (Ord a) => (a,a) -> ((a,a),(a,a)) -> Bool
     isIn (x,y) ((rx1,ry1),(rx2,ry2)) = rx1 <= x && x <= rx2 && ry1 <= y && y <= ry2
+
+connectMF :: StateT Game IO ()
+connectMF = do
+  ms <- M.keys . M.filter (\m -> m^.mtype == Miner) <$> use machines
+  imachines <- use machines
+  let ps = concat $ fmap (\m -> fmap ((,) m) $ go m imachines [m]) ms
+  connects .= ps
+
+  where
+    go :: (Int,Int) -> M.Map (Int,Int) Machine -> [(Int,Int)] -> [(Int,Int)]
+    go (x,y) mp trac = concat $ [run p mp trac | p <- [(x+1,y),(x-1,y),(x,y+1),(x,y-1)], M.member p mp, p `notElem` trac]
+
+    run :: (Int,Int) -> M.Map (Int,Int) Machine -> [(Int,Int)] -> [(Int,Int)]
+    run p mp trac = case (mp M.! p)^.mtype of
+      Miner -> []
+      Pipe -> go p mp (p:trac)
+      Factory -> [p]
 
 tick :: StateT Game IO ()
 tick = do
@@ -147,7 +186,14 @@ liftO m op = toOpaque <$> execStateT m (fromOpaque op)
 main = do
   export (toJSString "initGame") initGame
   export (toJSString "tick") (liftO tick)
-  export (toJSString "newMachine") (liftO . newMachine)
+  export (toJSString "newMachine") (\x y -> liftO $ newMachine x y)
   export (toJSString "machinesOnScreen") machinesOnScreen
   export (toJSString "inA") ((return :: Int -> IO Int) . inA . read)
   export (toJSString "outA") ((return :: Int -> IO Int) . outA . read)
+  export (toJSString "connects") exconnects
+  export (toJSString "fromEnum") (return . fromEnum . head :: String -> IO Int)
+  export (toJSString "minemap") ((\g x -> return $ M.lookup x (fromOpaque g ^. minemap)) :: Opaque Game -> (Int,Int) -> IO (Maybe (SKI,Double)))
+
+  where
+    exconnects :: Opaque Game -> (Int,Int) -> IO Bool
+    exconnects g p = return $ elem p $ concat $ fmap (\(x,y) -> [x,y]) $ (fromOpaque g)^.connects
