@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds, TypeOperators, FlexibleContexts, Rank2Types #-}
 {-# LANGUAGE DeriveFunctor, ScopedTypeVariables, PackageImports #-}
+module Main where
+
 import Haste
 import Haste.Foreign hiding (get)
 import Haste.JSON
@@ -8,9 +10,12 @@ import MakeLense
 import Lens.Family2
 import Lens.Family2.Stock
 import Lens.Family2.State.Lazy
+import Lens.Family2.Unchecked
 import Data.IORef
+import Data.List
 import qualified Data.Map as M
 import "mtl" Control.Monad.State
+import Debug.Trace
 
 data LambdaT a = LVar a | LAbs Lambda | LApp Lambda Lambda deriving (Eq, Show, Functor)
 type Lambda = LambdaT Int
@@ -93,6 +98,9 @@ seval m0 = go 0 m0 where
   go n (CApp (CApp (CApp S m1) m2) m3) = go (n+1) (CApp (CApp m1 m3) (CApp m2 m3))
   go n m = (n,m)
 
+_mayOf :: a -> Lens' (Maybe a) a
+_mayOf d = lens (maybe d id) (\m x -> Just x)
+
 data MachineType = Miner | Pipe | Factory deriving (Eq, Show, Enum, Read)
 
 inA :: MachineType -> Int
@@ -118,11 +126,13 @@ instance Serialize MachineType where
 type Machine = UnionT '[
   "mtype" :< MachineType,
   "position" :< (Int, Int),
-  "items" :< M.Map SKI Int
+  "items" :< M.Map SKI Int,
+  "amount" :< Double
   ]
 
 type Game = UnionT '[
   "machines" :< M.Map (Int,Int) Machine,
+  "diff" :< M.Map (Int,Int) Double,
   "connects" :< [((Int,Int),(Int,Int))],
   "minemap" :< M.Map (Int,Int) (SKI,Double)
   ]
@@ -130,13 +140,17 @@ type Game = UnionT '[
 mtype :: Has (Union xs) "mtype" out => Lens' (Union xs) out; mtype = lenses (Name :: Name "mtype")
 position :: Has (Union xs) "position" out => Lens' (Union xs) out; position = lenses (Name :: Name "position")
 items :: Has (Union xs) "items" out => Lens' (Union xs) out; items = lenses (Name :: Name "items")
+amount :: Has (Union xs) "amount" out => Lens' (Union xs) out; amount = lenses (Name :: Name "amount")
+parents :: Has (Union xs) "parents" out => Lens' (Union xs) out; parents = lenses (Name :: Name "parents")
 machines :: Has (Union xs) "machines" out => Lens' (Union xs) out; machines = lenses (Name :: Name "machines")
+diff :: Has (Union xs) "diff" out => Lens' (Union xs) out; diff = lenses (Name :: Name "diff")
 connects :: Has (Union xs) "connects" out => Lens' (Union xs) out; connects = lenses (Name :: Name "connects")
 minemap :: Has (Union xs) "minemap" out => Lens' (Union xs) out; minemap = lenses (Name :: Name "minemap")
 
 initGame :: IO (Opaque Game)
 initGame = return $ toOpaque $
-  sinsert (Tag M.empty) $
+  sinsert (Tag M.empty :: "machines" :< M.Map (Int,Int) Machine) $
+  sinsert (Tag M.empty :: "diff" :< M.Map (Int,Int) Double) $
   sinsert (Tag []) $
   sinsert (Tag (M.fromList [((0,0), (S,100))])) $
   Union HNil
@@ -146,10 +160,12 @@ newMachine st p = do
   machines %= M.insert p mch
   connectMF
   where
+    typ = read st
     mch =
-      sinsert (Tag (read st)) $
+      sinsert (Tag typ) $
       sinsert (Tag p) $
       sinsert (Tag M.empty) $
+      sinsert (Tag 0) $
       Union HNil
 
 machinesOnScreen :: (Int, Int) -> Opaque Game -> IO [((Int,Int), MachineType)]
@@ -177,8 +193,40 @@ connectMF = do
 
 tick :: StateT Game IO ()
 tick = do
-  -- lift . print =<< get
-  return ()
+  mchs <- use machines
+  ds <- use diff
+
+  mapM_ (uncurry runMachine) $ M.toList mchs
+  forM_ (M.keys mchs) $ \p -> do
+    machines . at p . _Just . amount += ds ^. at p ^. _mayOf 0
+
+  diff .= M.empty
+
+  where
+    neighbors :: (Int, Int) -> StateT Game IO [(Int, Int)]
+    neighbors (x,y) = do
+      mch <- use machines
+      return [p | p <- [(x+1,y),(x-1,y),(x,y+1),(x,y-1)], M.member p mch]
+
+    send :: (Int, Int) -> (Int, Int) -> Double -> StateT Game IO ()
+    send source target m = do
+      diff . at source . _mayOf 0 -= m
+      diff . at target . _mayOf 0 += m
+
+    runMachine :: (Int, Int) -> Machine -> StateT Game IO ()
+    runMachine p m = do
+      case m^.mtype of
+        Miner -> do
+          when (m ^. amount < 100) $ do
+            machines . at p . _Just . amount += 10
+        _ -> return ()
+
+      let a = m ^. amount
+      mch <- use machines
+      ns <- filter (\x -> mch M.! x ^. amount < a) <$> neighbors p
+      let a' = (/ (fromIntegral $ length ns + 1)) $ (a +) $ sum $ fmap (\x -> mch M.! x ^. amount) ns
+      forM_ ns $ \n -> do
+        send p n $ a - (mch M.! n ^. amount)
 
 liftO :: StateT a IO () -> Opaque a -> IO (Opaque a)
 liftO m op = toOpaque <$> execStateT m (fromOpaque op)
@@ -188,12 +236,14 @@ main = do
   export (toJSString "tick") (liftO tick)
   export (toJSString "newMachine") (\x y -> liftO $ newMachine x y)
   export (toJSString "machinesOnScreen") machinesOnScreen
-  export (toJSString "inA") ((return :: Int -> IO Int) . inA . read)
-  export (toJSString "outA") ((return :: Int -> IO Int) . outA . read)
   export (toJSString "connects") exconnects
   export (toJSString "fromEnum") (return . fromEnum . head :: String -> IO Int)
   export (toJSString "minemap") ((\g x -> return $ M.lookup x (fromOpaque g ^. minemap)) :: Opaque Game -> (Int,Int) -> IO (Maybe (SKI,Double)))
+  export (toJSString "getAmount") getAmount
 
   where
     exconnects :: Opaque Game -> (Int,Int) -> IO Bool
     exconnects g p = return $ elem p $ concat $ fmap (\(x,y) -> [x,y]) $ (fromOpaque g)^.connects
+
+    getAmount :: Opaque Game -> (Int,Int) -> IO Double
+    getAmount g p = return $ (fromOpaque g ^. machines) M.! p ^. amount

@@ -1,0 +1,12 @@
+flags: {}
+extra-package-dbs: []
+packages:
+- '.'
+extra-deps:
+- HTTP-4000.2.23
+- base-orphans-0.5.4
+- ghc-simple-0.3
+- haste-compiler-0.5.4.2
+- shellmate-0.2.3
+- tar-0.5.0.3
+resolver: lts-5.5

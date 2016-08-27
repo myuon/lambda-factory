@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es2015",
+        "noImplicitAny": false,
+        "sourceMap": false,
+        "outDir": "./src/",
+        "jsx": "react"
+    },
+    "exclude": [
+        "node_modules"
+    ],
+    "file": [
+      "./src/interface.tsx"
+    ]
+}

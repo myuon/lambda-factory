@@ -1,7 +1,17 @@
 {
-  "name": "_",
+  "name": "lambda-factory",
   "version": "1.0.0",
   "description": "",
+  "main": "index.js",
+  "dependencies": {
+    "@types/createjs": "0.0.28",
+    "@types/jquery": "^1.10.27",
+    "immutable": "^3.8.1",
+    "jquery": "^3.1.0",
+    "react": "^15.3.0",
+    "react-dom": "^15.3.0",
+    "typescript": "^2.0.0"
+  },
   "watch": {
     "test": {
       "patterns": [
@@ -11,12 +21,17 @@
     }
   },
   "scripts": {
-    "test": "cd src; hastec '--start=$HASTE_MAIN(); initialize();' --with-js=interface.js main.hs -o ../pages/js/main.js",
+    "test": "cd src; hastec '--start=$HASTE_MAIN(); main();' --with-js=main.js Main.hs -o ../pages/js/bundle.js",
     "watch": "npm-watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/myuon/lambda-factory.git"
   },
   "author": "",
   "license": "MIT",
-  "dependencies": {
-    "semantic-ui": "^2.1.8"
-  }
+  "bugs": {
+    "url": "https://github.com/myuon/lambda-factory/issues"
+  },
+  "homepage": "https://github.com/myuon/lambda-factory#readme"
 }
